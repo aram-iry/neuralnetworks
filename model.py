@@ -1,6 +1,6 @@
 """
-Model factory – MobileNetV3-Small for fast CPU training.
-Only ~2.5M params → trains well on CPU.
+Model factory – EfficientNet-B0 for better accuracy while still being CPU-trainable.
+~5.3M params → good balance of accuracy and training speed.
 """
 
 import torch.nn as nn
@@ -10,15 +10,15 @@ from config import NUM_CLASSES
 
 
 def build_model(pretrained: bool = True) -> nn.Module:
-    """
-    MobileNetV3-Small: lightweight, fast on CPU, ImageNet-pretrained.
-    """
-    weights = models.MobileNet_V3_Small_Weights.IMAGENET1K_V1 if pretrained else None
-    model = models.mobilenet_v3_small(weights=weights)
+    weights = models.EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
+    model = models.efficientnet_b0(weights=weights)
 
     # Replace classifier head
-    in_features = model.classifier[3].in_features
-    model.classifier[3] = nn.Linear(in_features, NUM_CLASSES)
+    in_features = model.classifier[1].in_features
+    model.classifier = nn.Sequential(
+        nn.Dropout(p=0.3, inplace=True),
+        nn.Linear(in_features, NUM_CLASSES),
+    )
 
     # Freeze backbone initially
     freeze_backbone(model)

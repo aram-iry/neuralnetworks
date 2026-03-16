@@ -25,20 +25,20 @@ NUM_CLASSES = 80
 LABEL_OFFSET = 1  # CSV labels start at 1; internal indices = label - 1
 
 # ─── Image ────────────────────────────────────────────────────────
-IMG_SIZE = 128          # Smaller for CPU training speed
+IMG_SIZE = 160          # Balance between speed and accuracy
 IMG_MEAN = [0.485, 0.456, 0.406]   # ImageNet stats
 IMG_STD = [0.229, 0.224, 0.225]
 
 # ─── Training (tuned for CPU on laptop) ───────────────────────────
-BATCH_SIZE = 64         # CPU can handle larger batches (no VRAM limit)
-NUM_WORKERS = 4         # your Zen3 has 8 threads
-VAL_SPLIT = 0.15        # 85/15 split — more training data for CPU
-EPOCHS = 20
-EARLY_STOP_PATIENCE = 5
+BATCH_SIZE = 64         # Larger batches = fewer steps per epoch = faster
+NUM_WORKERS = 2         # Fewer workers = less spawn overhead on CPU
+VAL_SPLIT = 0.15
+EPOCHS = 25
+EARLY_STOP_PATIENCE = 6
 
 # ─── Optimizer / Scheduler ────────────────────────────────────────
-BACKBONE_LR = 1e-4
-HEAD_LR = 1e-3
+BACKBONE_LR = 5e-5
+HEAD_LR = 5e-4
 WEIGHT_DECAY = 1e-4
 SCHEDULER = "cosine"    # "cosine" | "step"
 STEP_SIZE = 7           # only used when SCHEDULER == "step"
@@ -48,4 +48,4 @@ STEP_GAMMA = 0.1
 USE_AMP = False         # No CUDA → AMP disabled
 
 # ─── Fine-tuning strategy ────────────────────────────────────────
-FREEZE_BACKBONE_EPOCHS = 3   # train only head for first N epochs
+FREEZE_BACKBONE_EPOCHS = 5   # train only head for first N epochs

@@ -28,12 +28,14 @@ from seed import seed_everything
 # ──────────────────────────────────────────────────────────────────
 def get_train_transforms() -> T.Compose:
     return T.Compose([
-        T.RandomResizedCrop(IMG_SIZE, scale=(0.75, 1.0)),
+        T.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0)),
         T.RandomHorizontalFlip(p=0.5),
-        T.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.2, hue=0.05),
-        T.RandomRotation(15),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
+        T.RandomRotation(20),
+        T.RandomAffine(degrees=0, translate=(0.1, 0.1)),
         T.ToTensor(),
         T.Normalize(IMG_MEAN, IMG_STD),
+        T.RandomErasing(p=0.2, scale=(0.02, 0.15)),
     ])
 
 
@@ -129,11 +131,27 @@ def _seed_worker(worker_id):
     random.seed(worker_seed)
 
 
+class _TransformSubset(Dataset):
+    """Wraps a Subset and applies a transform, avoiding duplicate dataset loads."""
+    def __init__(self, subset, transform):
+        self.subset = subset
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.subset)
+
+    def __getitem__(self, idx):
+        img, label = self.subset[idx]
+        if self.transform:
+            img = self.transform(img)
+        return img, label
+
+
 def get_train_val_loaders():
     """Returns (train_loader, val_loader) with stratified split."""
     seed_everything()
 
-    # Load full dataset twice (different transforms)
+    # Load dataset once with no transform (PIL images returned as-is)
     full_ds = FoodTrainDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=None)
     labels = np.array(full_ds.labels)
 
@@ -142,11 +160,8 @@ def get_train_val_loaders():
     )
     train_idx, val_idx = next(splitter.split(np.zeros(len(labels)), labels))
 
-    train_ds = FoodTrainDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=get_train_transforms())
-    val_ds = FoodTrainDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=get_val_transforms())
-
-    train_subset = Subset(train_ds, train_idx)
-    val_subset = Subset(val_ds, val_idx)
+    train_subset = _TransformSubset(Subset(full_ds, train_idx), get_train_transforms())
+    val_subset = _TransformSubset(Subset(full_ds, val_idx), get_val_transforms())
 
     g = torch.Generator()
     g.manual_seed(SEED)
