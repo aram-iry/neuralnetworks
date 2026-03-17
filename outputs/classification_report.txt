@@ -1,0 +1,88 @@
+Validation Weighted F1: 0.4776
+
+                         precision    recall  f1-score   support
+
+                lasagna       0.49      0.51      0.50        71
+grilled_cheese_sandwich       0.51      0.60      0.55        65
+                strudel       0.50      0.58      0.54        62
+            greek_salad       0.54      0.70      0.61        56
+             scotch_egg       0.71      0.63      0.67        46
+                 waffle       0.53      0.53      0.53        45
+       chocolate_mousse       0.55      0.65      0.60        69
+                brisket       0.50      0.51      0.50        61
+                compote       0.41      0.38      0.39        73
+              croquette       0.48      0.55      0.51        69
+        stuffed_peppers       0.78      0.78      0.78        59
+                 confit       0.35      0.41      0.38        63
+        salisbury_steak       0.45      0.35      0.39        43
+          ambrosia_food       0.41      0.38      0.39        68
+                fritter       0.42      0.51      0.46        71
+        beef_stroganoff       0.61      0.68      0.65        60
+          caprese_salad       0.59      0.70      0.64        67
+         fried_calamari       0.47      0.57      0.51        51
+                poutine       0.62      0.56      0.59        43
+            marble_cake       0.00      0.00      0.00         4
+     beef_bourguignonne       0.48      0.55      0.51        51
+          chicken_curry       0.54      0.51      0.52        57
+               dumpling       0.49      0.58      0.53        71
+                crumpet       0.47      0.51      0.49        61
+                 tamale       0.51      0.41      0.45        49
+         grilled_salmon       0.39      0.51      0.44        61
+                  pilaf       0.46      0.33      0.39        51
+                rugulah       0.13      0.11      0.12        45
+              crab_cake       0.46      0.46      0.46        65
+           coconut_cake       0.55      0.63      0.58        67
+         scrambled_eggs       0.51      0.50      0.51        50
+                 haggis       0.46      0.34      0.39        47
+           tuna_tartare       0.56      0.49      0.52        51
+    carbonnade_flamande       0.38      0.37      0.38        54
+              entrecote       0.61      0.37      0.46        51
+           lobster_food       0.52      0.23      0.31        62
+              crab_food       0.28      0.27      0.28        74
+         barbecued_wing       0.55      0.56      0.55        72
+            poached_egg       0.48      0.44      0.46        54
+    spaghetti_bolognese       0.50      0.49      0.49        43
+          frozen_yogurt       0.48      0.47      0.48        57
+          welsh_rarebit       0.27      0.21      0.24        38
+                  donut       0.51      0.57      0.54        65
+               rigatoni       0.33      0.42      0.37        55
+           ham_sandwich       0.42      0.47      0.45        59
+                edamame       0.66      0.72      0.69        64
+                   taco       0.38      0.33      0.35        54
+                  adobo       0.48      0.47      0.47        60
+          croque_madame       0.47      0.57      0.52        63
+                risotto       0.39      0.52      0.44        58
+    spaghetti_carbonara       0.60      0.68      0.64        47
+                 wonton       0.33      0.34      0.33        62
+         bacon_and_eggs       0.46      0.38      0.41        69
+             cheesecake       0.37      0.35      0.36        49
+             blancmange       0.22      0.19      0.20        43
+            gingerbread       0.57      0.60      0.58        63
+           chiffon_cake       0.61      0.58      0.59        74
+                tempura       0.48      0.33      0.39        61
+      hot_and_sour_soup       0.42      0.40      0.41        42
+             boiled_egg       0.65      0.72      0.69        65
+            coffee_cake       0.45      0.43      0.44        74
+             tenderloin       0.44      0.39      0.41        61
+       upside_down_cake       0.74      0.60      0.66        57
+        beef_wellington       0.68      0.83      0.75        53
+                terrine       0.38      0.32      0.35        65
+               kedgeree       0.33      0.31      0.32        45
+               scrapple       0.39      0.31      0.34        39
+                ravioli       0.15      0.14      0.15        56
+            cottage_pie       0.56      0.64      0.60        61
+              guacamole       0.64      0.67      0.66        57
+                 huitre       0.47      0.43      0.45        79
+                  torte       0.45      0.32      0.37        69
+           filet_mignon       0.49      0.37      0.42        59
+             crumb_cake       0.49      0.71      0.58        73
+                  jerky       0.63      0.60      0.61        52
+             tamale_pie       0.39      0.49      0.43        45
+             applesauce       0.52      0.57      0.54        58
+                    pho       0.53      0.39      0.45        41
+             fried_rice       0.36      0.32      0.34        63
+                savarin       0.42      0.29      0.34        55
+
+               accuracy                           0.48      4592
+              macro avg       0.47      0.47      0.47      4592
+           weighted avg       0.48      0.48      0.48      4592
