@@ -8,7 +8,7 @@ import os
 # ─── Reproducibility ──────────────────────────────────────────────
 SEED = 42
 
-# ─── Paths ────────────────────────────────────────────��───────────
+# ─── Paths ────────────────────────────────────────────────────────
 DATA_DIR = os.path.join("data")
 TRAIN_DIR = os.path.join(DATA_DIR, "train_set", "train_set", "train_set")
 TEST_DIR = os.path.join(DATA_DIR, "test_set", "test_set", "test_set")
@@ -25,16 +25,16 @@ NUM_CLASSES = 80
 LABEL_OFFSET = 1  # CSV labels start at 1; internal indices = label - 1
 
 # ─── Image ────────────────────────────────────────────────────────
-IMG_SIZE = 128          # Smaller for CPU training speed
+IMG_SIZE = 224          # Standard input size for pretrained ImageNet backbones
 IMG_MEAN = [0.485, 0.456, 0.406]   # ImageNet stats
 IMG_STD = [0.229, 0.224, 0.225]
 
-# ─── Training (tuned for CPU on laptop) ───────────────────────────
-BATCH_SIZE = 64         # CPU can handle larger batches (no VRAM limit)
-NUM_WORKERS = 4         # your Zen3 has 8 threads
-VAL_SPLIT = 0.15        # 85/15 split — more training data for CPU
-EPOCHS = 20
-EARLY_STOP_PATIENCE = 5
+# ─── Training (tuned for GTX 1660 Super, 6 GB VRAM) ──────────────
+BATCH_SIZE = 128        # Fits comfortably with 224×224 images on 6 GB VRAM
+NUM_WORKERS = 4
+VAL_SPLIT = 0.15        # 85/15 split
+EPOCHS = 50
+EARLY_STOP_PATIENCE = 10
 
 # ─── Optimizer / Scheduler ────────────────────────────────────────
 BACKBONE_LR = 1e-4
@@ -43,9 +43,6 @@ WEIGHT_DECAY = 1e-4
 SCHEDULER = "cosine"    # "cosine" | "step"
 STEP_SIZE = 7           # only used when SCHEDULER == "step"
 STEP_GAMMA = 0.1
-
-# ─── Mixed-precision ───────────────��─────────────────────────────
-USE_AMP = False         # No CUDA → AMP disabled
 
 # ─── Fine-tuning strategy ────────────────────────────────────────
 FREEZE_BACKBONE_EPOCHS = 3   # train only head for first N epochs

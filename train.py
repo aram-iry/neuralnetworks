@@ -31,7 +31,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler):
         imgs, labels = imgs.to(device), labels.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+        with torch.amp.autocast(device.type, enabled=device.type == "cuda"):
             logits = model(imgs)
             loss = criterion(logits, labels)
 
@@ -62,7 +62,7 @@ def validate(model, loader, criterion, device):
 
     for imgs, labels in loader:
         imgs, labels = imgs.to(device), labels.to(device)
-        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+        with torch.amp.autocast(device.type, enabled=device.type == "cuda"):
             logits = model(imgs)
             loss = criterion(logits, labels)
 
@@ -105,7 +105,7 @@ def main():
     optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
 
     # AMP scaler – enabled only on CUDA; a no-op on CPU
-    scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
+    scaler = torch.amp.GradScaler(device.type, enabled=device.type == "cuda")
 
     # ── Scheduler ─────────────────────────────────────────────────
     if SCHEDULER == "cosine":
@@ -130,7 +130,7 @@ def main():
             print(f"\n[INFO] Epoch {epoch}: unfreezing backbone for full fine-tuning")
             unfreeze_backbone(model)
             optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
-            scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
+            scaler = torch.amp.GradScaler(device.type, enabled=device.type == "cuda")
             if SCHEDULER == "cosine":
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer, T_max=EPOCHS - epoch + 1, eta_min=1e-6

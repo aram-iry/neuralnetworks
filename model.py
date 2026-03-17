@@ -1,6 +1,6 @@
 """
-Model factory – MobileNetV3-Small for fast CPU training.
-Only ~2.5M params → trains well on CPU.
+Model factory – MobileNetV3-Small fine-tuned for the food classification task.
+Only ~2.5M params → fast to train even on modest hardware.
 """
 
 import torch.nn as nn
@@ -11,7 +11,7 @@ from config import NUM_CLASSES
 
 def build_model(pretrained: bool = True) -> nn.Module:
     """
-    MobileNetV3-Small: lightweight, fast on CPU, ImageNet-pretrained.
+    MobileNetV3-Small: lightweight, ImageNet-pretrained.
     """
     weights = models.MobileNet_V3_Small_Weights.IMAGENET1K_V1 if pretrained else None
     model = models.mobilenet_v3_small(weights=weights)
