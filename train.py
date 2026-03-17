@@ -1,5 +1,6 @@
 """
-Training loop – CPU-optimized, no AMP.
+Training loop – GPU-accelerated with Automatic Mixed Precision (AMP).
+Falls back to CPU when no CUDA device is available.
 """
 
 import os
@@ -21,7 +22,7 @@ from dataset import get_train_val_loaders
 from model import build_model, unfreeze_backbone, get_optimizer
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def train_one_epoch(model, loader, criterion, optimizer, device, scaler):
     model.train()
     running_loss = 0.0
     all_preds, all_labels = [], []
@@ -30,10 +31,13 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         imgs, labels = imgs.to(device), labels.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        logits = model(imgs)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
+        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+            logits = model(imgs)
+            loss = criterion(logits, labels)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         running_loss += loss.item() * imgs.size(0)
         all_preds.append(logits.argmax(dim=1).cpu().numpy())
@@ -58,8 +62,9 @@ def validate(model, loader, criterion, device):
 
     for imgs, labels in loader:
         imgs, labels = imgs.to(device), labels.to(device)
-        logits = model(imgs)
-        loss = criterion(logits, labels)
+        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+            logits = model(imgs)
+            loss = criterion(logits, labels)
 
         running_loss += loss.item() * imgs.size(0)
         all_preds.append(logits.argmax(dim=1).cpu().numpy())
@@ -77,12 +82,14 @@ def main():
     seed_everything(SEED)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] Using device: {device}")
-    print(f"[INFO] Threads available: {torch.get_num_threads()}")
-
-    # Use all CPU cores
-    torch.set_num_threads(os.cpu_count())
+    if device.type == "cuda":
+        print(f"[INFO] GPU: {torch.cuda.get_device_name(device)}")
+    else:
+        # Use all CPU cores when no GPU is available
+        torch.set_num_threads(os.cpu_count())
+        print(f"[INFO] Threads available: {torch.get_num_threads()}")
 
     # ── Data ──────────────────────────────────────────────────────
     train_loader, val_loader = get_train_val_loaders()
@@ -96,6 +103,9 @@ def main():
 
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
+
+    # AMP scaler – enabled only on CUDA; a no-op on CPU
+    scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
 
     # ── Scheduler ─────────────────────────────────────────────────
     if SCHEDULER == "cosine":
@@ -120,6 +130,7 @@ def main():
             print(f"\n[INFO] Epoch {epoch}: unfreezing backbone for full fine-tuning")
             unfreeze_backbone(model)
             optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
+            scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
             if SCHEDULER == "cosine":
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer, T_max=EPOCHS - epoch + 1, eta_min=1e-6
@@ -130,7 +141,7 @@ def main():
                 )
 
         train_loss, train_f1 = train_one_epoch(
-            model, train_loader, criterion, optimizer, device
+            model, train_loader, criterion, optimizer, device, scaler
         )
         val_loss, val_f1 = validate(model, val_loader, criterion, device)
         scheduler.step()
