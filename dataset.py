@@ -18,14 +18,14 @@ import torchvision.transforms as T
 from config import (
     TRAIN_DIR, TEST_DIR, TRAIN_LABELS_CSV, LABEL_OFFSET,
     IMG_SIZE, IMG_MEAN, IMG_STD,
-    BATCH_SIZE, NUM_WORKERS, VAL_SPLIT, SEED,
+    BATCH_SIZE, NUM_WORKERS, VAL_SPLIT, SEED, DEVICE,
 )
 from seed import seed_everything
 
 
-# ──────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 # Transforms
-# ──────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 def get_train_transforms() -> T.Compose:
     return T.Compose([
         T.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0)),
@@ -65,9 +65,9 @@ def get_tta_transforms() -> List[T.Compose]:
     return [base, hflip]
 
 
-# ──────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 # Datasets
-# ──────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 class FoodTrainDataset(Dataset):
     """Flat folder + CSV labels. Internal labels are 0-based."""
 
@@ -121,9 +121,9 @@ class FoodTestDataset(Dataset):
         return img, fname
 
 
-# ──────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 # DataLoader factories
-# ──────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 def _seed_worker(worker_id):
     worker_seed = SEED + worker_id
     np.random.seed(worker_seed)
@@ -145,6 +145,12 @@ class _TransformSubset(Dataset):
         if self.transform:
             img = self.transform(img)
         return img, label
+
+
+# pin_memory speeds up host-to-device transfers; only beneficial with CUDA.
+_PIN_MEMORY = DEVICE.type == "cuda"
+# prefetch_factor pre-loads batches in worker processes to keep GPU fed.
+_PREFETCH_FACTOR = 2 if NUM_WORKERS > 0 else None
 
 
 def get_train_val_loaders():
@@ -171,7 +177,8 @@ def get_train_val_loaders():
         batch_size=BATCH_SIZE,
         shuffle=True,
         num_workers=NUM_WORKERS,
-        pin_memory=False,
+        pin_memory=_PIN_MEMORY,
+        prefetch_factor=_PREFETCH_FACTOR,
         worker_init_fn=_seed_worker,
         generator=g,
         drop_last=True,
@@ -181,7 +188,8 @@ def get_train_val_loaders():
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=NUM_WORKERS,
-        pin_memory=False,
+        pin_memory=_PIN_MEMORY,
+        prefetch_factor=_PREFETCH_FACTOR,
         worker_init_fn=_seed_worker,
     )
     return train_loader, val_loader
@@ -194,5 +202,6 @@ def get_test_loader():
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=NUM_WORKERS,
-        pin_memory=False,
+        pin_memory=_PIN_MEMORY,
+        prefetch_factor=_PREFETCH_FACTOR,
     )

@@ -1,5 +1,6 @@
 """
-Training loop – CPU-optimized, no AMP.
+Training loop - GPU-accelerated with AMP and gradient accumulation.
+Auto-detects CUDA; falls back to CPU when unavailable.
 """
 
 import os
@@ -9,34 +10,49 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 from sklearn.metrics import f1_score
 
 from config import (
-    EPOCHS, EARLY_STOP_PATIENCE, CHECKPOINT_PATH, OUTPUT_DIR,
+    DEVICE, EPOCHS, EARLY_STOP_PATIENCE, CHECKPOINT_PATH, OUTPUT_DIR,
     BACKBONE_LR, HEAD_LR, WEIGHT_DECAY, SCHEDULER,
     STEP_SIZE, STEP_GAMMA, FREEZE_BACKBONE_EPOCHS, SEED,
+    USE_AMP, GRAD_ACCUM_STEPS,
 )
 from seed import seed_everything
 from dataset import get_train_val_loaders
 from model import build_model, unfreeze_backbone, get_optimizer
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def _log_vram():
+    """Print current and peak VRAM usage if CUDA is available."""
+    if torch.cuda.is_available():
+        used = torch.cuda.memory_allocated() / 1024 ** 3
+        peak = torch.cuda.max_memory_allocated() / 1024 ** 3
+        print(f"[VRAM] current={used:.2f} GB  peak={peak:.2f} GB")
+
+
+def train_one_epoch(model, loader, criterion, optimizer, device, scaler, use_amp, grad_accum_steps):
     model.train()
     running_loss = 0.0
     all_preds, all_labels = [], []
 
     for batch_idx, (imgs, labels) in enumerate(loader):
-        imgs, labels = imgs.to(device), labels.to(device)
-        optimizer.zero_grad(set_to_none=True)
+        imgs, labels = imgs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
-        logits = model(imgs)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
+        with autocast(enabled=use_amp):
+            logits = model(imgs)
+            loss = criterion(logits, labels)
 
+        # Scale loss for gradient accumulation; track the unscaled value
         running_loss += loss.item() * imgs.size(0)
-        all_preds.append(logits.argmax(dim=1).cpu().numpy())
+        scaler.scale(loss / grad_accum_steps).backward()
+
+        if (batch_idx + 1) % grad_accum_steps == 0 or (batch_idx + 1) == len(loader):
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+        all_preds.append(logits.detach().argmax(dim=1).cpu().numpy())
         all_labels.append(labels.cpu().numpy())
 
         if (batch_idx + 1) % 50 == 0:
@@ -45,21 +61,22 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     n_samples = sum(len(p) for p in all_preds)
     epoch_loss = running_loss / n_samples
     preds = np.concatenate(all_preds)
-    labels = np.concatenate(all_labels)
-    epoch_f1 = f1_score(labels, preds, average="weighted")
+    labels_arr = np.concatenate(all_labels)
+    epoch_f1 = f1_score(labels_arr, preds, average="weighted")
     return epoch_loss, epoch_f1
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device):
+def validate(model, loader, criterion, device, use_amp):
     model.eval()
     running_loss = 0.0
     all_preds, all_labels = [], []
 
     for imgs, labels in loader:
-        imgs, labels = imgs.to(device), labels.to(device)
-        logits = model(imgs)
-        loss = criterion(logits, labels)
+        imgs, labels = imgs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+        with autocast(enabled=use_amp):
+            logits = model(imgs)
+            loss = criterion(logits, labels)
 
         running_loss += loss.item() * imgs.size(0)
         all_preds.append(logits.argmax(dim=1).cpu().numpy())
@@ -68,8 +85,8 @@ def validate(model, loader, criterion, device):
     n_samples = sum(len(p) for p in all_preds)
     epoch_loss = running_loss / n_samples
     preds = np.concatenate(all_preds)
-    labels = np.concatenate(all_labels)
-    epoch_f1 = f1_score(labels, preds, average="weighted")
+    labels_arr = np.concatenate(all_labels)
+    epoch_f1 = f1_score(labels_arr, preds, average="weighted")
     return epoch_loss, epoch_f1
 
 
@@ -77,18 +94,26 @@ def main():
     seed_everything(SEED)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    device = torch.device("cpu")
+    device = DEVICE
     print(f"[INFO] Using device: {device}")
-    print(f"[INFO] Threads available: {torch.get_num_threads()}")
+    if device.type == "cuda":
+        print(f"[INFO] GPU: {torch.cuda.get_device_name(0)}")
+        print(f"[INFO] VRAM total: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        print(f"[INFO] AMP enabled: {USE_AMP}")
+        torch.backends.cudnn.benchmark = True  # speed up fixed-size input training
+    else:
+        print(f"[INFO] Threads available: {torch.get_num_threads()}")
+        torch.set_num_threads(os.cpu_count())
 
-    # Use all CPU cores
-    torch.set_num_threads(os.cpu_count())
+    # AMP scaler (no-op on CPU)
+    scaler = GradScaler(enabled=USE_AMP)
 
-    # ── Data ──────────────────────────────────────────────────────
+    # -- Data ------------------------------------------------------------
     train_loader, val_loader = get_train_val_loaders()
     print(f"[INFO] Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
+    print(f"[INFO] Effective batch size: {train_loader.batch_size * GRAD_ACCUM_STEPS}")
 
-    # ── Model ─────────────────────────────────────────────────────
+    # -- Model -----------------------------------------------------------
     model = build_model(pretrained=True).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -97,17 +122,19 @@ def main():
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
 
-    # ── Scheduler ─────────────────────────────────────────────────
-    if SCHEDULER == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=EPOCHS, eta_min=1e-6
-        )
-    else:
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=STEP_SIZE, gamma=STEP_GAMMA
+    # -- Scheduler -------------------------------------------------------
+    def _make_scheduler(opt, remaining_epochs):
+        if SCHEDULER == "cosine":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                opt, T_max=remaining_epochs, eta_min=1e-6
+            )
+        return torch.optim.lr_scheduler.StepLR(
+            opt, step_size=STEP_SIZE, gamma=STEP_GAMMA
         )
 
-    # ── Training loop ─────────────────────────────────────────────
+    scheduler = _make_scheduler(optimizer, EPOCHS)
+
+    # -- Training loop ---------------------------------------------------
     best_f1 = 0.0
     patience_counter = 0
     history = {"train_loss": [], "val_loss": [], "train_f1": [], "val_f1": []}
@@ -120,19 +147,13 @@ def main():
             print(f"\n[INFO] Epoch {epoch}: unfreezing backbone for full fine-tuning")
             unfreeze_backbone(model)
             optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
-            if SCHEDULER == "cosine":
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=EPOCHS - epoch + 1, eta_min=1e-6
-                )
-            else:
-                scheduler = torch.optim.lr_scheduler.StepLR(
-                    optimizer, step_size=STEP_SIZE, gamma=STEP_GAMMA
-                )
+            scheduler = _make_scheduler(optimizer, EPOCHS - epoch + 1)
 
         train_loss, train_f1 = train_one_epoch(
-            model, train_loader, criterion, optimizer, device
+            model, train_loader, criterion, optimizer, device,
+            scaler, USE_AMP, GRAD_ACCUM_STEPS,
         )
-        val_loss, val_f1 = validate(model, val_loader, criterion, device)
+        val_loss, val_f1 = validate(model, val_loader, criterion, device, USE_AMP)
         scheduler.step()
 
         elapsed = time.time() - t0
@@ -142,6 +163,8 @@ def main():
             f"Val Loss: {val_loss:.4f}  F1: {val_f1:.4f} | "
             f"{elapsed:.0f}s"
         )
+        if device.type == "cuda":
+            _log_vram()
 
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
@@ -153,7 +176,7 @@ def main():
             best_f1 = val_f1
             patience_counter = 0
             torch.save(model.state_dict(), CHECKPOINT_PATH)
-            print(f"  ✓ Saved best model (F1={best_f1:.4f})")
+            print(f"  checkpoint saved (F1={best_f1:.4f})")
         else:
             patience_counter += 1
             if patience_counter >= EARLY_STOP_PATIENCE:
