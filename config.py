@@ -25,13 +25,13 @@ NUM_CLASSES = 80
 LABEL_OFFSET = 1  # CSV labels start at 1; internal indices = label - 1
 
 # ─── Image ────────────────────────────────────────────────────────
-IMG_SIZE = 160          # Balance between speed and accuracy
-IMG_MEAN = [0.485, 0.456, 0.406]   # ImageNet stats
+IMG_SIZE = 224
+IMG_MEAN = [0.485, 0.456, 0.406]
 IMG_STD = [0.229, 0.224, 0.225]
 
 # ─── Training (tuned for CPU on laptop) ───────────────────────────
-BATCH_SIZE = 64         # Larger batches = fewer steps per epoch = faster
-NUM_WORKERS = 2         # Fewer workers = less spawn overhead on CPU
+BATCH_SIZE = 32         # Larger batches = fewer steps per epoch = faster
+NUM_WORKERS = 4         # Fewer workers = less spawn overhead on CPU
 VAL_SPLIT = 0.15
 EPOCHS = 25
 EARLY_STOP_PATIENCE = 6
