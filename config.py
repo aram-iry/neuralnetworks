@@ -33,12 +33,13 @@ IMG_STD = [0.229, 0.224, 0.225]
 BATCH_SIZE = 64         # CPU can handle larger batches (no VRAM limit)
 NUM_WORKERS = 6         # your Zen3 has 8 threads
 VAL_SPLIT = 0.15        # 85/15 split — more training data for CPU
-EPOCHS = 200
+EPOCHS = 75
 EARLY_STOP_PATIENCE = 30
 
 # ─── Optimizer / Scheduler ────────────────────────────────────────
 BACKBONE_LR = 1e-3
 HEAD_LR = 1e-3
+LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 SCHEDULER = "cosine"    # "cosine" | "step"
 STEP_SIZE = 7           # only used when SCHEDULER == "step"
