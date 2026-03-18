@@ -1,5 +1,6 @@
 import os
 import time
+import numpy as np
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -11,11 +12,13 @@ from sklearn.model_selection import KFold
 
 # Import your existing configurations and model
 from config import (
-    TRAIN_DIR, TRAIN_LABELS_CSV, LABEL_OFFSET, 
-    IMG_SIZE, IMG_MEAN, IMG_STD, BATCH_SIZE, 
-    EPOCHS, LEARNING_RATE, WEIGHT_DECAY
+    TRAIN_DIR, TRAIN_LABELS_CSV, LABEL_OFFSET,
+    IMG_SIZE, IMG_MEAN, IMG_STD, BATCH_SIZE,
+    EPOCHS, LEARNING_RATE, WEIGHT_DECAY,
+    EARLY_STOP_PATIENCE, COSINE_T0, COSINE_T_MULT,
 )
 from model import build_model
+from train import rand_bbox
 
 # ─── Custom CSV Dataset ──────────────────────────────────────────
 class FoodCSVDataset(Dataset):
@@ -49,30 +52,47 @@ class FoodCSVDataset(Dataset):
 # ─── Transforms ──────────────────────────────────────────────────
 def get_transforms():
     train_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
-        transforms.RandomHorizontalFlip(),
+        transforms.RandomResizedCrop(IMG_SIZE, scale=(0.65, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.2),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.25, hue=0.08),
+        transforms.RandomRotation(20),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), shear=10),
         v2.RandAugment(num_ops=2, magnitude=9),
         transforms.ToTensor(),
-        transforms.Normalize(mean=IMG_MEAN, std=IMG_STD)
+        transforms.Normalize(mean=IMG_MEAN, std=IMG_STD),
+        transforms.RandomErasing(p=0.3, scale=(0.02, 0.2)),
     ])
-    
+
     val_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.Resize(int(IMG_SIZE * 1.14)),
+        transforms.CenterCrop(IMG_SIZE),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMG_MEAN, std=IMG_STD)
     ])
     return train_transform, val_transform
 
 # ─── Mixup Helpers ───────────────────────────────────────────────
-def mixup_data(x, y, alpha=1.0):
+def mixup_cutmix_data(x, y, alpha=1.0):
+    """Apply Mixup or CutMix with 50/50 chance."""
     if alpha > 0:
-        lam = torch.distributions.beta.Beta(alpha, alpha).sample().item()
+        lam = np.random.beta(alpha, alpha)
     else:
-        lam = 1
-    batch_size = x.size()[0]
+        lam = 1.0
+    batch_size = x.size(0)
     index = torch.randperm(batch_size).to(x.device)
-    mixed_x = lam * x + (1 - lam) * x[index, :]
     y_a, y_b = y, y[index]
+
+    if np.random.rand() > 0.5:
+        # CutMix
+        bbx1, bby1, bbx2, bby2 = rand_bbox(x.size(), lam)
+        mixed_x = x.clone()
+        mixed_x[:, :, bbx1:bbx2, bby1:bby2] = x[index, :, bbx1:bbx2, bby1:bby2]
+        lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size(-1) * x.size(-2)))
+    else:
+        # Mixup
+        mixed_x = lam * x + (1 - lam) * x[index, :]
+
     return mixed_x, y_a, y_b, lam
 
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
@@ -106,64 +126,75 @@ def main():
         val_loader = DataLoader(val_sub, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
         
         model = build_model().to(device)
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
         optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
-        
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=COSINE_T0, T_mult=COSINE_T_MULT, eta_min=1e-6
+        )
+        scaler = torch.amp.GradScaler('cuda', enabled=device.type == "cuda")
+
         best_acc = 0.0
-        
+        patience_counter = 0
+
         for epoch in range(1, EPOCHS + 1):
             start_time = time.time()
-            
+
             # --- TRAIN ---
             model.train()
             train_loss, correct_train, total_train = 0.0, 0, 0
-            
+
             for images, labels in train_loader:
                 images, labels = images.to(device), labels.to(device)
-                mixed_images, labels_a, labels_b, lam = mixup_data(images, labels, alpha=1.0)
-                
-                optimizer.zero_grad()
+                mixed_images, labels_a, labels_b, lam = mixup_cutmix_data(images, labels, alpha=1.0)
+
+                optimizer.zero_grad(set_to_none=True)
                 with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
                     outputs = model(mixed_images)
                     loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
-                
-                loss.backward()
-                optimizer.step()
-                
+
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+
                 train_loss += loss.item() * images.size(0)
                 _, predicted = outputs.max(1)
-                correct_train += (lam * predicted.eq(labels_a).sum().float() + 
+                correct_train += (lam * predicted.eq(labels_a).sum().float() +
                                   (1 - lam) * predicted.eq(labels_b).sum().float()).item()
                 total_train += labels.size(0)
-                
+
             scheduler.step()
             train_loss, train_acc = train_loss / total_train, correct_train / total_train
-            
+
             # --- VALIDATION ---
             model.eval()
             val_loss, correct_val, total_val = 0.0, 0, 0
-            
+
             with torch.no_grad():
                 for images, labels in val_loader:
                     images, labels = images.to(device), labels.to(device)
                     with torch.amp.autocast('cuda', enabled=device.type == "cuda"):
                         outputs = model(images)
                         loss = criterion(outputs, labels)
-                        
+
                     val_loss += loss.item() * images.size(0)
                     _, predicted = outputs.max(1)
                     total_val += labels.size(0)
                     correct_val += predicted.eq(labels).sum().item()
-            
+
             val_loss, val_acc = val_loss / total_val, correct_val / total_val
-            
+
             print(f"Epoch {epoch:02d}/{EPOCHS} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} | {time.time()-start_time:.0f}s")
-            
+
             if val_acc > best_acc:
                 best_acc = val_acc
+                patience_counter = 0
                 torch.save(model.state_dict(), f"outputs/best_model_fold_{fold}.pth")
                 print(f"  ✓ Saved Fold {fold} best model (Acc={best_acc:.4f})")
+            else:
+                patience_counter += 1
+                if patience_counter >= EARLY_STOP_PATIENCE:
+                    print(f"[INFO] Fold {fold}: early stopping at epoch {epoch}")
+                    break
 
 if __name__ == "__main__":
     main()
