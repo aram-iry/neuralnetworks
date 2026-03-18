@@ -5,7 +5,7 @@ Dataset & DataLoader factories.
 """
 
 import os
-from typing import List
+from typing import List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -28,12 +28,16 @@ from seed import seed_everything
 # ──────────────────────────────────────────────────────────────────
 def get_train_transforms() -> T.Compose:
     return T.Compose([
-        T.RandomResizedCrop(IMG_SIZE, scale=(0.75, 1.0)),
+        T.RandomResizedCrop(IMG_SIZE, scale=(0.65, 1.0)),
         T.RandomHorizontalFlip(p=0.5),
-        T.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.2, hue=0.05),
-        T.RandomRotation(15),
+        T.RandomVerticalFlip(p=0.2),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.25, hue=0.08),
+        T.RandomRotation(20),
+        T.RandomAffine(degrees=0, translate=(0.1, 0.1), shear=10),
+        T.RandAugment(num_ops=2, magnitude=9),
         T.ToTensor(),
         T.Normalize(IMG_MEAN, IMG_STD),
+        T.RandomErasing(p=0.3, scale=(0.02, 0.2)),
     ])
 
 
@@ -50,17 +54,33 @@ def get_test_transforms() -> T.Compose:
     return get_val_transforms()
 
 
-def get_tta_transforms() -> List[T.Compose]:
-    """2 views: original + horizontal flip."""
+def get_tta_transforms() -> Tuple[List[T.Compose], T.Compose]:
+    """7 views: original, hflip, vflip, 4 corner crops."""
+    resize_size = int(IMG_SIZE * 1.14)
     base = get_val_transforms()
     hflip = T.Compose([
-        T.Resize(int(IMG_SIZE * 1.14)),
+        T.Resize(resize_size),
         T.CenterCrop(IMG_SIZE),
         T.RandomHorizontalFlip(p=1.0),
         T.ToTensor(),
         T.Normalize(IMG_MEAN, IMG_STD),
     ])
-    return [base, hflip]
+    vflip = T.Compose([
+        T.Resize(resize_size),
+        T.CenterCrop(IMG_SIZE),
+        T.RandomVerticalFlip(p=1.0),
+        T.ToTensor(),
+        T.Normalize(IMG_MEAN, IMG_STD),
+    ])
+    # 4 corner crops using FiveCrop (top-left, top-right, bottom-left, bottom-right, center)
+    five_crop = T.Compose([
+        T.Resize(resize_size),
+        T.FiveCrop(IMG_SIZE),
+        T.Lambda(lambda crops: torch.stack([
+            T.Normalize(IMG_MEAN, IMG_STD)(T.ToTensor()(crop)) for crop in crops
+        ])),
+    ])
+    return [base, hflip, vflip], five_crop
 
 
 # ──────────────────────────────────────────────────────────────────

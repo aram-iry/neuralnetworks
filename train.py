@@ -15,10 +15,30 @@ from config import (
     EPOCHS, EARLY_STOP_PATIENCE, CHECKPOINT_PATH, OUTPUT_DIR,
     BACKBONE_LR, HEAD_LR, WEIGHT_DECAY, SCHEDULER,
     STEP_SIZE, STEP_GAMMA, FREEZE_BACKBONE_EPOCHS, SEED,
+    COSINE_T0, COSINE_T_MULT,
 )
 from seed import seed_everything
 from dataset import get_train_val_loaders
 from model import build_model, get_optimizer
+
+
+def rand_bbox(size, lam):
+    """Generate random bounding box for CutMix."""
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1.0 - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, scaler):
@@ -26,22 +46,28 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler):
     running_loss = 0.0
     all_preds, all_labels = [], []
 
-    # Mixup parameter
-    alpha = 1
+    # Mixup / CutMix parameter
+    alpha = 1.0
 
     for batch_idx, (imgs, labels) in enumerate(loader):
         imgs, labels = imgs.to(device), labels.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        # --- MIXUP IMPLEMENTATION ---
-        if alpha > 0:
-            lam = np.random.beta(alpha, alpha)
-        else:
-            lam = 1.0
-            
+        # --- MIXUP or CUTMIX (50/50 chance) ---
+        lam = np.random.beta(alpha, alpha) if alpha > 0 else 1.0
         index = torch.randperm(imgs.size(0)).to(device)
-        mixed_imgs = lam * imgs + (1 - lam) * imgs[index]
         labels_a, labels_b = labels, labels[index]
+
+        if np.random.rand() > 0.5:
+            # CutMix
+            bbx1, bby1, bbx2, bby2 = rand_bbox(imgs.size(), lam)
+            mixed_imgs = imgs.clone()
+            mixed_imgs[:, :, bbx1:bbx2, bby1:bby2] = imgs[index, :, bbx1:bbx2, bby1:bby2]
+            # Adjust lambda to actual area ratio
+            lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (imgs.size(-1) * imgs.size(-2)))
+        else:
+            # Mixup
+            mixed_imgs = lam * imgs + (1 - lam) * imgs[index]
         # ----------------------------
 
         # New PyTorch AMP syntax (removes FutureWarnings)
@@ -95,6 +121,21 @@ def validate(model, loader, criterion, device):
     return epoch_loss, epoch_f1
 
 
+def _build_scheduler(optimizer, remaining_epochs):
+    if SCHEDULER == "cosine_warm_restarts":
+        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=COSINE_T0, T_mult=COSINE_T_MULT, eta_min=1e-6
+        )
+    elif SCHEDULER == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=remaining_epochs, eta_min=1e-6
+        )
+    else:
+        return torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=STEP_SIZE, gamma=STEP_GAMMA
+        )
+
+
 def main():
     seed_everything(SEED)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -125,14 +166,7 @@ def main():
     scaler = torch.amp.GradScaler('cuda', enabled=device.type == "cuda")
 
     # ── Scheduler ─────────────────────────────────────────────────
-    if SCHEDULER == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=EPOCHS, eta_min=1e-6
-        )
-    else:
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=STEP_SIZE, gamma=STEP_GAMMA
-        )
+    scheduler = _build_scheduler(optimizer, EPOCHS)
 
     # ── Training loop ─────────────────────────────────────────────
     best_f1 = 0.0
@@ -148,14 +182,7 @@ def main():
             
             optimizer = get_optimizer(model, BACKBONE_LR, HEAD_LR, WEIGHT_DECAY)
             scaler = torch.amp.GradScaler('cuda', enabled=device.type == "cuda")
-            if SCHEDULER == "cosine":
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=EPOCHS - epoch + 1, eta_min=1e-6
-                )
-            else:
-                scheduler = torch.optim.lr_scheduler.StepLR(
-                    optimizer, step_size=STEP_SIZE, gamma=STEP_GAMMA
-                )
+            scheduler = _build_scheduler(optimizer, EPOCHS - epoch + 1)
 
         train_loss, train_f1 = train_one_epoch(
             model, train_loader, criterion, optimizer, device, scaler

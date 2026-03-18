@@ -18,8 +18,11 @@ def build_model() -> nn.Module:
     # Replace classifier head (ResNet uses 'fc')
     in_features = model.fc.in_features
     model.fc = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(in_features, NUM_CLASSES)
+            nn.Linear(in_features, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(p=0.4),
+            nn.Linear(256, NUM_CLASSES),
     )
     return model
 

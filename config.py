@@ -25,23 +25,25 @@ NUM_CLASSES = 80
 LABEL_OFFSET = 1  # CSV labels start at 1; internal indices = label - 1
 
 # ─── Image ────────────────────────────────────────────────────────
-IMG_SIZE = 128          # Smaller for CPU training speed
+IMG_SIZE = 224          # Native ResNet resolution for better accuracy
 IMG_MEAN = [0.485, 0.456, 0.406]   # ImageNet stats
 IMG_STD = [0.229, 0.224, 0.225]
 
 # ─── Training (tuned for CPU on laptop) ───────────────────────────
-BATCH_SIZE = 64         # CPU can handle larger batches (no VRAM limit)
+BATCH_SIZE = 32         # Reduced for 224px images
 NUM_WORKERS = 6         # your Zen3 has 8 threads
 VAL_SPLIT = 0.15        # 85/15 split — more training data for CPU
-EPOCHS = 75
-EARLY_STOP_PATIENCE = 30
+EPOCHS = 150
+EARLY_STOP_PATIENCE = 45
 
 # ─── Optimizer / Scheduler ────────────────────────────────────────
 BACKBONE_LR = 1e-3
 HEAD_LR = 1e-3
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-SCHEDULER = "cosine"    # "cosine" | "step"
+SCHEDULER = "cosine_warm_restarts"  # "cosine" | "step" | "cosine_warm_restarts"
+COSINE_T0 = 15          # initial restart period for warm restarts
+COSINE_T_MULT = 2       # multiplier for restart period
 STEP_SIZE = 7           # only used when SCHEDULER == "step"
 STEP_GAMMA = 0.1
 

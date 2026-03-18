@@ -29,7 +29,7 @@ def predict(use_tta: bool = True):
     print(f"[INFO] Using device: {device}")
 
     # ── Load model ────────────────────────────────────────────────
-    model = build_model(pretrained=False).to(device)
+    model = build_model().to(device)
     state = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=True)
     model.load_state_dict(state)
     model.eval()
@@ -37,10 +37,13 @@ def predict(use_tta: bool = True):
 
     # ── Choose transforms ─────────────────────────────────────────
     if use_tta:
-        transforms_list = get_tta_transforms()
-        print(f"[INFO] TTA enabled with {len(transforms_list)} views")
+        simple_transforms, five_crop_transform = get_tta_transforms()
+        total_views = len(simple_transforms) + 5  # 5 from FiveCrop
+        print(f"[INFO] TTA enabled with {total_views} views")
     else:
-        transforms_list = [get_test_transforms()]
+        simple_transforms = [get_test_transforms()]
+        five_crop_transform = None
+        total_views = 1
 
     # ── Accumulate soft predictions ───────────────────────────────
     base_ds = FoodTestDataset(TEST_DIR, transform=get_test_transforms())
@@ -48,7 +51,8 @@ def predict(use_tta: bool = True):
     n_test = len(fnames)
     avg_probs = np.zeros((n_test, NUM_CLASSES), dtype=np.float64)
 
-    for t_idx, tfm in enumerate(transforms_list):
+    view_count = 0
+    for t_idx, tfm in enumerate(simple_transforms):
         ds = FoodTestDataset(TEST_DIR, transform=tfm)
         loader = DataLoader(
             ds, batch_size=BATCH_SIZE, shuffle=False,
@@ -62,9 +66,34 @@ def predict(use_tta: bool = True):
             bs = probs.shape[0]
             avg_probs[offset:offset + bs] += probs
             offset += bs
-        print(f"  TTA view {t_idx + 1}/{len(transforms_list)} done")
+        view_count += 1
+        print(f"  TTA view {view_count}/{total_views} done")
 
-    avg_probs /= len(transforms_list)
+    # FiveCrop TTA (5 crops per image)
+    if five_crop_transform is not None:
+        ds = FoodTestDataset(TEST_DIR, transform=five_crop_transform)
+        loader = DataLoader(
+            ds, batch_size=BATCH_SIZE, shuffle=False,
+            num_workers=NUM_WORKERS, pin_memory=False,
+        )
+        offset = 0
+        for crops, _ in loader:
+            # crops shape: (batch, 5, C, H, W)
+            bs = crops.size(0)
+            batch_probs = np.zeros((bs, NUM_CLASSES), dtype=np.float64)
+            for i in range(5):
+                crop_imgs = crops[:, i].to(device)
+                logits = model(crop_imgs)
+                batch_probs += torch.softmax(logits, dim=1).cpu().numpy()
+            batch_probs /= 5.0
+            avg_probs[offset:offset + bs] += batch_probs
+            offset += bs
+        view_count += 1
+        print(f"  TTA FiveCrop (5 crops) done — view {view_count}/{total_views}")
+
+    # We have len(simple_transforms) simple views + 1 aggregated FiveCrop view
+    num_view_groups = len(simple_transforms) + (1 if five_crop_transform is not None else 0)
+    avg_probs /= num_view_groups
     preds_0based = avg_probs.argmax(axis=1)
 
     # Convert back to 1-based labels for submission
