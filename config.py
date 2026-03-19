@@ -1,54 +1,38 @@
-"""
-Central configuration file – every hyperparameter lives here.
-Food Recognition Challenge 2026 – 80 classes, flat image dirs, CSV labels.
-"""
-
 import os
 
 # ─── Reproducibility ──────────────────────────────────────────────
 SEED = 42
 
-# ─── Paths ────────────────────────────────────────────��───────────
-DATA_DIR = os.path.join("data")
+# ─── Paths ───────────────────────────────────────────────────────
+DATA_DIR = "data"
+# Using your exact nested path for the flat directory:
 TRAIN_DIR = os.path.join(DATA_DIR, "train_set", "train_set", "train_set")
 TEST_DIR = os.path.join(DATA_DIR, "test_set", "test_set", "test_set")
 TRAIN_LABELS_CSV = os.path.join(DATA_DIR, "train_labels.csv")
-CLASS_LIST_FILE = os.path.join(DATA_DIR, "class_list_food.txt")
 SAMPLE_CSV = os.path.join(DATA_DIR, "sample.csv")
-OUTPUT_DIR = os.path.join("outputs")
+
+OUTPUT_DIR = "outputs"
 CHECKPOINT_PATH = os.path.join(OUTPUT_DIR, "best_model.pth")
 SUBMISSION_PATH = os.path.join(OUTPUT_DIR, "submission.csv")
 
-# ─── Class mapping (parsed from class_list_food.txt) ─────────────
-# Labels in CSV are 1-based (1..80). We keep them as-is for submission.
+# ─── Class mapping ───────────────────────────────────────────────
 NUM_CLASSES = 80
-LABEL_OFFSET = 1  # CSV labels start at 1; internal indices = label - 1
+LABEL_OFFSET = 1  # CSV labels start at 1, PyTorch needs them to start at 0
 
-# ─── Image ────────────────────────────────────────────────────────
-IMG_SIZE = 224          # Native ResNet resolution for better accuracy
-IMG_MEAN = [0.485, 0.456, 0.406]   # ImageNet stats
+# ─── Image ─────────────────────────────���──────────────────────────
+IMG_SIZE = 128          
+IMG_MEAN = [0.485, 0.456, 0.406]   
 IMG_STD = [0.229, 0.224, 0.225]
 
-# ─── Training (tuned for CPU on laptop) ───────────────────────────
-BATCH_SIZE = 32         # Reduced for 224px images
-NUM_WORKERS = 6         # your Zen3 has 8 threads
-VAL_SPLIT = 0.15        # 85/15 split — more training data for CPU
-EPOCHS = 150
-EARLY_STOP_PATIENCE = 45
+# ─── Training ─────────────────────────────────────────────────────
+BATCH_SIZE = 64         
+NUM_WORKERS = 8
+VAL_SPLIT = 0.2        # 100/0 Split for the final push!
+EPOCHS = 75
+EARLY_STOP_PATIENCE = 30
 
 # ─── Optimizer / Scheduler ────────────────────────────────────────
-BACKBONE_LR = 1e-3
-HEAD_LR = 1e-3
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-SCHEDULER = "cosine_warm_restarts"  # "cosine" | "step" | "cosine_warm_restarts"
-COSINE_T0 = 15          # initial restart period for warm restarts
-COSINE_T_MULT = 2       # multiplier for restart period
-STEP_SIZE = 7           # only used when SCHEDULER == "step"
-STEP_GAMMA = 0.1
-
-# ─── Mixed-precision ───────────────��─────────────────────────────
-USE_AMP = True         # No CUDA → AMP disabled
-
-# ─── Fine-tuning strategy ────────────────────────────────────────
-FREEZE_BACKBONE_EPOCHS = 0   # train only head for first N epochs
+COSINE_T0 = 10           # Number of iterations for the first restart
+COSINE_T_MULT = 2        
