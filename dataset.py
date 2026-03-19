@@ -1,183 +1,47 @@
-"""
-Dataset & DataLoader factories.
-- Flat image directory + CSV labels for training
-- Flat image directory for test
-"""
-
 import os
-from typing import List
-
 import numpy as np
 import pandas as pd
 from PIL import Image
-from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset, DataLoader, Subset
-import torch
+from sklearn.model_selection import StratifiedShuffleSplit
 import torchvision.transforms as T
+from config import *
 
-from config import (
-    TRAIN_DIR, TEST_DIR, TRAIN_LABELS_CSV, LABEL_OFFSET,
-    IMG_SIZE, IMG_MEAN, IMG_STD,
-    BATCH_SIZE, NUM_WORKERS, VAL_SPLIT, SEED,
-)
-from seed import seed_everything
-
-
-# ──────────────────────────────────────────────────────────────────
-# Transforms
-# ──────────────────────────────────────────────────────────────────
-def get_train_transforms() -> T.Compose:
-    return T.Compose([
-        T.RandomResizedCrop(IMG_SIZE, scale=(0.75, 1.0)),
-        T.RandomHorizontalFlip(p=0.5),
-        T.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.2, hue=0.05),
-        T.RandomRotation(15),
-        T.ToTensor(),
-        T.Normalize(IMG_MEAN, IMG_STD),
-    ])
-
-
-def get_val_transforms() -> T.Compose:
-    return T.Compose([
-        T.Resize(int(IMG_SIZE * 1.14)),
-        T.CenterCrop(IMG_SIZE),
-        T.ToTensor(),
-        T.Normalize(IMG_MEAN, IMG_STD),
-    ])
-
-
-def get_test_transforms() -> T.Compose:
-    return get_val_transforms()
-
-
-def get_tta_transforms() -> List[T.Compose]:
-    """2 views: original + horizontal flip."""
-    base = get_val_transforms()
-    hflip = T.Compose([
-        T.Resize(int(IMG_SIZE * 1.14)),
-        T.CenterCrop(IMG_SIZE),
-        T.RandomHorizontalFlip(p=1.0),
-        T.ToTensor(),
-        T.Normalize(IMG_MEAN, IMG_STD),
-    ])
-    return [base, hflip]
-
-
-# ──────────────────────────────────────────────────────────────────
-# Datasets
-# ──────────────────────────────────────────────────────────────────
-class FoodTrainDataset(Dataset):
-    """Flat folder + CSV labels. Internal labels are 0-based."""
-
-    def __init__(self, img_dir: str, csv_path: str, transform=None):
+class FoodDataset(Dataset):
+    def __init__(self, img_dir, csv_file=None, transform=None):
         self.img_dir = img_dir
         self.transform = transform
+        if csv_file:
+            df = pd.read_csv(csv_file)
+            self.samples = df["img_name"].tolist()
+            self.labels = [int(l) - LABEL_OFFSET for l in df["label"].tolist()]
+        else:
+            self.samples = [f for f in os.listdir(img_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            self.labels = None
 
-        df = pd.read_csv(csv_path)
-        # Keep only rows whose image files actually exist
-        self.filenames = []
-        self.labels = []
-        for _, row in df.iterrows():
-            fpath = os.path.join(img_dir, row["img_name"])
-            if os.path.exists(fpath):
-                self.filenames.append(row["img_name"])
-                self.labels.append(int(row["label"]) - LABEL_OFFSET)  # 0-based
-
-        print(f"  [Dataset] Loaded {len(self.filenames)} images from {img_dir}")
-
-    def __len__(self):
-        return len(self.filenames)
-
+    def __len__(self): return len(self.samples)
     def __getitem__(self, idx):
-        path = os.path.join(self.img_dir, self.filenames[idx])
-        img = Image.open(path).convert("RGB")
-        if self.transform:
-            img = self.transform(img)
-        return img, self.labels[idx]
-
-
-class FoodTestDataset(Dataset):
-    """Flat folder of unlabeled images."""
-
-    def __init__(self, img_dir: str, transform=None):
-        self.img_dir = img_dir
-        self.transform = transform
-        self.fnames = sorted([
-            f for f in os.listdir(img_dir)
-            if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".webp"))
-        ])
-        print(f"  [Dataset] Found {len(self.fnames)} test images in {img_dir}")
-
-    def __len__(self):
-        return len(self.fnames)
-
-    def __getitem__(self, idx):
-        fname = self.fnames[idx]
-        img = Image.open(os.path.join(self.img_dir, fname)).convert("RGB")
-        if self.transform:
-            img = self.transform(img)
-        return img, fname
-
-
-# ──────────────────────────────────────────────────────────────────
-# DataLoader factories
-# ──────────────────────────────────────────────────────────────────
-def _seed_worker(worker_id):
-    worker_seed = SEED + worker_id
-    np.random.seed(worker_seed)
-    import random
-    random.seed(worker_seed)
-
+        img = Image.open(os.path.join(self.img_dir, self.samples[idx])).convert("RGB")
+        if self.transform: img = self.transform(img)
+        return (img, self.labels[idx]) if self.labels is not None else (img, self.samples[idx])
 
 def get_train_val_loaders():
-    """Returns (train_loader, val_loader) with stratified split."""
-    seed_everything()
-
-    # Load full dataset twice (different transforms)
-    full_ds = FoodTrainDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=None)
+    tfm = T.Compose([
+        T.RandomResizedCrop(IMG_SIZE, scale=(0.7, 1.0)),
+        T.RandomHorizontalFlip(),
+        T.RandomRotation(15),
+        T.ColorJitter(brightness=0.2, contrast=0.2),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    
+    full_ds = FoodDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=tfm)
     labels = np.array(full_ds.labels)
-
-    splitter = StratifiedShuffleSplit(
-        n_splits=1, test_size=VAL_SPLIT, random_state=SEED
-    )
-    train_idx, val_idx = next(splitter.split(np.zeros(len(labels)), labels))
-
-    train_ds = FoodTrainDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=get_train_transforms())
-    val_ds = FoodTrainDataset(TRAIN_DIR, TRAIN_LABELS_CSV, transform=get_val_transforms())
-
-    train_subset = Subset(train_ds, train_idx)
-    val_subset = Subset(val_ds, val_idx)
-
-    g = torch.Generator()
-    g.manual_seed(SEED)
-
-    train_loader = DataLoader(
-        train_subset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        worker_init_fn=_seed_worker,
-        generator=g,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_subset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        worker_init_fn=_seed_worker,
-    )
+    split = StratifiedShuffleSplit(n_splits=1, test_size=VAL_SPLIT, random_state=SEED)
+    train_idx, val_idx = next(split.split(np.zeros(len(labels)), labels))
+    train_loader = DataLoader(Subset(full_ds, train_idx), batch_size=BATCH_SIZE, 
+                              shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
+    val_loader = DataLoader(Subset(full_ds, val_idx), batch_size=BATCH_SIZE, 
+                            shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
+    
     return train_loader, val_loader
-
-
-def get_test_loader():
-    ds = FoodTestDataset(TEST_DIR, transform=get_test_transforms())
-    return DataLoader(
-        ds,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-    )

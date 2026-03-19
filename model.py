@@ -1,59 +1,53 @@
-"""
-Model factory – MobileNetV3-Small for fast CPU training.
-Only ~2.5M params → trains well on CPU.
-"""
-
+import torch
 import torch.nn as nn
-from torchvision import models
+import torch.nn.functional as F
 
-from config import NUM_CLASSES
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
+class FoodCNN(nn.Module):
+    def __init__(self, num_classes=80):
+        super().__init__()
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2, 2)
+        )
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2, 2)
+        )
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2, 2)
+        )
+        self.layer4 = nn.Sequential(
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU(0.1),
+            nn.AdaptiveAvgPool2d((1, 1))
+        )
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.5),
+            nn.Linear(512, num_classes)
+        )
 
-def build_model(pretrained: bool = True) -> nn.Module:
-    """
-    MobileNetV3-Small: lightweight, fast on CPU, ImageNet-pretrained.
-    """
-    weights = models.MobileNet_V3_Small_Weights.IMAGENET1K_V1 if pretrained else None
-    model = models.mobilenet_v3_small(weights=weights)
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = torch.flatten(x, 1)
+        return self.classifier(x)
 
-    # Replace classifier head
-    in_features = model.classifier[3].in_features
-    model.classifier[3] = nn.Linear(in_features, NUM_CLASSES)
-
-    # Freeze backbone initially
-    freeze_backbone(model)
-
-    return model
-
-
-def freeze_backbone(model: nn.Module) -> None:
-    """Freeze everything except the classifier head."""
-    for name, param in model.named_parameters():
-        if "classifier" not in name:
-            param.requires_grad = False
-
-
-def unfreeze_backbone(model: nn.Module) -> None:
-    """Unfreeze all parameters for full fine-tuning."""
-    for param in model.parameters():
-        param.requires_grad = True
-
-
-def get_optimizer(model: nn.Module, backbone_lr: float, head_lr: float,
-                  weight_decay: float):
-    """Differential learning rates: smaller for backbone, larger for head."""
-    backbone_params = [
-        p for n, p in model.named_parameters()
-        if "classifier" not in n and p.requires_grad
-    ]
-    head_params = [
-        p for n, p in model.named_parameters()
-        if "classifier" in n and p.requires_grad
-    ]
-
-    param_groups = []
-    if backbone_params:
-        param_groups.append({"params": backbone_params, "lr": backbone_lr})
-    param_groups.append({"params": head_params, "lr": head_lr})
-
-    return __import__("torch").optim.AdamW(param_groups, weight_decay=weight_decay)
+def build_model(pretrained=False):
+    return FoodCNN()
