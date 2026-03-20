@@ -14,7 +14,6 @@ def channel_shuffle(x, groups):
 
 class MBlock(nn.Module):
     """
-    M Block: Depthwise Separable Convolution (Inverted Residual style)
     Structure: PW Conv -> DW Conv -> PW Conv
     """
     def __init__(self, in_channels, out_channels, stride=1):

@@ -10,24 +10,20 @@ from config import *
 from model_msnet import build_model
 from dataset import get_train_val_loaders
 
-# Mute the DML fallback warnings
-warnings.filterwarnings("ignore")
-
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     train_loader, val_loader = get_train_val_loaders()
     
     model = build_model().to(DEVICE)
     
-    # We start with a slightly lower LR to be more precise
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4) 
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3) 
     
     # ReduceLROnPlateau will "rescue" the model if F1 stops climbing
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=5, verbose=True
     )
     
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     print(f"\n[INFO] Starting training on {DEVICE}")
     best_f1 = 0
