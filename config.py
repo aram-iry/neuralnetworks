@@ -21,9 +21,8 @@ IMG_SIZE = 128
 BATCH_SIZE = 64     # Good for 8GB VRAM
 NUM_WORKERS = 0     # Essential for Windows stability
 VAL_SPLIT = 0.15
-EPOCHS = 100
-LEARNING_RATE = 5e-4
+EPOCHS = 60
+LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 
-# --- AMD GPU Device ---
 DEVICE = torch_directml.device()

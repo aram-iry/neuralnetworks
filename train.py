@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import f1_score
 from config import *
-from model import build_model
+from model_msnet import build_model
 from dataset import get_train_val_loaders
 
 # Mute the DML fallback warnings
