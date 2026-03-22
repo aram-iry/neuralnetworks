@@ -18,7 +18,7 @@ SUBMISSION_PATH = os.path.join(OUTPUT_DIR, "submission.csv")
 NUM_CLASSES = 80
 LABEL_OFFSET = 1 
      
-BATCH_SIZE = 48     # Good for 8GB VRAM
+BATCH_SIZE = 64     # Good for 8GB VRAM
 NUM_WORKERS = 0     # Essential for Windows stability
 VAL_SPLIT = 0.15
 EPOCHS = 60

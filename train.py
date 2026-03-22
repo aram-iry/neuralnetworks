@@ -33,32 +33,27 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--img_size", type=int, default=IMG_SIZE,
                         help=f"Input image size (default: {IMG_SIZE})")
+    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE,
+                        help=f"Batch size (default: {BATCH_SIZE}). Reduce if OOM.")
+    parser.add_argument("--epochs", type=int, default=EPOCHS,
+                        help=f"Total epochs to train for (default: {EPOCHS})")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from the existing checkpoint")
     args = parser.parse_args()
 
     img_size = args.img_size
+    batch_size = args.batch_size
+    total_epochs = args.epochs
     checkpoint_path = os.path.join(OUTPUT_DIR, f"best_model_{img_size}.pth")
+    training_state_path = os.path.join(OUTPUT_DIR, f"training_state_{img_size}.pth")
     metrics_path = os.path.join(OUTPUT_DIR, f"metrics_{img_size}.csv")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # --- Initialise CSV log ---
-    with open(metrics_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "epoch", "elapsed_sec", "epoch_duration_sec", "samples_per_sec",
-            "train_loss", "val_loss",
-            "train_top1_acc", "val_top1_acc", "val_top5_acc",
-            "train_micro_f1", "train_macro_f1",
-            "val_micro_f1", "val_macro_f1",
-            "grad_norm", "lr"
-        ])
-
-    train_loader, val_loader = get_train_val_loaders(img_size=img_size)
+    train_loader, val_loader = get_train_val_loaders(img_size=img_size, batch_size=batch_size)
     n_train = len(train_loader.dataset)
 
     model = build_model().to(DEVICE)
-
-    # --- Model size in MB (parameter memory, consistent across runs) ---
     model_size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
 
     optimizer = torch.optim.Adam(
@@ -68,21 +63,79 @@ def main():
         eps=1e-8,
         weight_decay=WEIGHT_DECAY
     )
-
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=10, gamma=0.5
     )
-
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-    print(f"\n[INFO] IMG_SIZE: {img_size} | Seed: {SEED} | Device: {DEVICE}")
+    # --- Resume or fresh start ---
+    start_epoch = 1
+    best_f1 = 0
+
+    if args.resume:
+        # Try training state first, fall back to best model checkpoint
+        resume_path = training_state_path if os.path.exists(training_state_path) else checkpoint_path
+        if not os.path.exists(resume_path):
+            raise FileNotFoundError(
+                f"No checkpoint found at {training_state_path} or {checkpoint_path}. "
+                f"Run without --resume first."
+            )
+        state = torch.load(resume_path, map_location=DEVICE)
+
+        # Handle both old format (raw state dict) and new format (dict with keys)
+        if isinstance(state, dict) and "model" in state:
+            model.load_state_dict(state["model"])
+            optimizer.load_state_dict(state["optimizer"])
+            scheduler.load_state_dict(state["scheduler"])
+            start_epoch = state["epoch"] + 1
+            best_f1 = state["best_f1"]
+        else:
+            # Old format: just model weights, restore LR from CSV
+            model.load_state_dict(state)
+            if os.path.exists(metrics_path):
+                import pandas as pd
+                _df = pd.read_csv(metrics_path)
+                start_epoch = int(_df["epoch"].max()) + 1
+                best_f1 = float(_df["val_macro_f1"].max())
+                last_lr = float(_df["lr"].iloc[-1])
+                # Restore LR on optimizer
+                for pg in optimizer.param_groups:
+                    pg["lr"] = last_lr
+                # Fast-forward scheduler to match, without affecting optimizer LR
+                completed_epochs = start_epoch - 1
+                steps_done = completed_epochs // scheduler.step_size
+                scheduler.base_lrs = [LEARNING_RATE]
+                scheduler.last_epoch = completed_epochs
+                scheduler._step_count = completed_epochs + 1
+                print(f"[INFO] LR restored from CSV: {last_lr:.8f} (epoch {completed_epochs}, "
+                      f"{steps_done} decay step(s) applied)")
+            else:
+                start_epoch = EPOCHS + 1
+                print(f"[WARN] No metrics CSV found — LR schedule will restart from {LEARNING_RATE}.")
+
+        print(f"\n[INFO] Resuming from epoch {start_epoch} | Best F1 so far: {best_f1:.4f}")
+        # Append to existing CSV rather than overwriting
+    else:
+        # Fresh run: initialise CSV with header
+        with open(metrics_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "epoch", "elapsed_sec", "epoch_duration_sec", "samples_per_sec",
+                "train_loss", "val_loss",
+                "train_top1_acc", "val_top1_acc", "val_top5_acc",
+                "train_micro_f1", "train_macro_f1",
+                "val_micro_f1", "val_macro_f1",
+                "grad_norm", "lr"
+            ])
+
+    print(f"\n[INFO] IMG_SIZE: {img_size} | BATCH_SIZE: {batch_size} | Seed: {SEED} | Device: {DEVICE}")
     print(f"[INFO] Model size: {model_size_mb:.2f} MB")
+    print(f"[INFO] Training epochs {start_epoch} → {start_epoch + total_epochs - 1}")
     print(f"[INFO] Metrics will be saved to: {metrics_path}")
 
-    best_f1 = 0
     train_start = time.time()
 
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(start_epoch, start_epoch + total_epochs):
         epoch_start = time.time()
 
         # --- TRAINING PHASE ---
@@ -92,7 +145,7 @@ def main():
         train_total = 0
         train_preds, train_labels_all = [], []
         grad_norm_accum = 0.0
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{EPOCHS} [Train]", unit="batch")
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]", unit="batch")
 
         for imgs, labels in pbar:
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
@@ -100,10 +153,7 @@ def main():
             outputs = model(imgs)
             loss = criterion(outputs, labels)
             loss.backward()
-
-            # Grad norm before optimizer step
             grad_norm_accum += compute_grad_norm(model)
-
             optimizer.step()
             train_loss += loss.item()
             train_top1_correct += top_k_accuracy(outputs, labels, k=1)
@@ -134,12 +184,10 @@ def main():
             for imgs, labels in val_loader:
                 imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
                 outputs = model(imgs)
-
                 val_loss += criterion(outputs, labels).item()
                 val_top1_correct += top_k_accuracy(outputs, labels, k=1)
                 val_top5_correct += top_k_accuracy(outputs, labels, k=5)
                 val_total += labels.size(0)
-
                 val_preds.append(outputs.argmax(1).cpu().numpy())
                 val_labels_all.append(labels.cpu().numpy())
 
@@ -176,9 +224,27 @@ def main():
                 round(avg_grad_norm, 6), current_lr
             ])
 
+        # --- SAVE TRAINING STATE (every epoch) ---
+        torch.save({
+            "epoch": epoch,
+            "best_f1": best_f1,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+        }, training_state_path)
+
+        # --- SAVE BEST MODEL WEIGHTS ---
         if val_macro_f1 > best_f1:
             best_f1 = val_macro_f1
             torch.save(model.state_dict(), checkpoint_path)
+            # Update best_f1 in training state too
+            torch.save({
+                "epoch": epoch,
+                "best_f1": best_f1,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            }, training_state_path)
             print(f" >> [SAVED] New best model (Val Macro-F1): {best_f1:.4f}\n")
         else:
             print(f" >> [STAGNANT] Best Val Macro-F1 remains: {best_f1:.4f}\n")

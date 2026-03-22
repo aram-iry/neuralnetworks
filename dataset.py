@@ -26,7 +26,7 @@ class FoodDataset(Dataset):
         if self.transform: img = self.transform(img)
         return (img, self.labels[idx]) if self.labels is not None else (img, self.samples[idx])
 
-def get_train_val_loaders(img_size: int = IMG_SIZE):
+def get_train_val_loaders(img_size: int = IMG_SIZE, batch_size: int = BATCH_SIZE):
     tfm = T.Compose([
         T.RandomResizedCrop(img_size, scale=(0.7, 1.0)),
         T.RandomHorizontalFlip(),
@@ -41,9 +41,9 @@ def get_train_val_loaders(img_size: int = IMG_SIZE):
     split = StratifiedShuffleSplit(n_splits=1, test_size=VAL_SPLIT, random_state=SEED)
     train_idx, val_idx = next(split.split(np.zeros(len(labels)), labels))
 
-    train_loader = DataLoader(Subset(full_ds, train_idx), batch_size=BATCH_SIZE,
+    train_loader = DataLoader(Subset(full_ds, train_idx), batch_size=batch_size,
                               shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
-    val_loader = DataLoader(Subset(full_ds, val_idx), batch_size=BATCH_SIZE,
+    val_loader = DataLoader(Subset(full_ds, val_idx), batch_size=batch_size,
                             shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
     
     return train_loader, val_loader
