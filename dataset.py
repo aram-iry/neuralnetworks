@@ -20,14 +20,15 @@ class FoodDataset(Dataset):
             self.labels = None
 
     def __len__(self): return len(self.samples)
+
     def __getitem__(self, idx):
         img = Image.open(os.path.join(self.img_dir, self.samples[idx])).convert("RGB")
         if self.transform: img = self.transform(img)
         return (img, self.labels[idx]) if self.labels is not None else (img, self.samples[idx])
 
-def get_train_val_loaders():
+def get_train_val_loaders(img_size: int = IMG_SIZE):
     tfm = T.Compose([
-        T.RandomResizedCrop(IMG_SIZE, scale=(0.7, 1.0)),
+        T.RandomResizedCrop(img_size, scale=(0.7, 1.0)),
         T.RandomHorizontalFlip(),
         T.RandomRotation(15),
         T.ColorJitter(brightness=0.2, contrast=0.2),
@@ -39,9 +40,10 @@ def get_train_val_loaders():
     labels = np.array(full_ds.labels)
     split = StratifiedShuffleSplit(n_splits=1, test_size=VAL_SPLIT, random_state=SEED)
     train_idx, val_idx = next(split.split(np.zeros(len(labels)), labels))
-    train_loader = DataLoader(Subset(full_ds, train_idx), batch_size=BATCH_SIZE, 
+
+    train_loader = DataLoader(Subset(full_ds, train_idx), batch_size=BATCH_SIZE,
                               shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
-    val_loader = DataLoader(Subset(full_ds, val_idx), batch_size=BATCH_SIZE, 
+    val_loader = DataLoader(Subset(full_ds, val_idx), batch_size=BATCH_SIZE,
                             shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
     
     return train_loader, val_loader

@@ -1,0 +1,2 @@
+epoch,elapsed_sec,epoch_duration_sec,samples_per_sec,train_loss,val_loss,train_top1_acc,val_top1_acc,val_top5_acc,train_micro_f1,train_macro_f1,val_micro_f1,val_macro_f1,grad_norm,lr
+1,69.5,69.5,374.39,4.277025,4.116852,0.036049,0.060105,0.208624,0.036049,0.022875,0.060105,0.023678,8.737496,0.001
